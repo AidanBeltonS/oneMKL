@@ -454,46 +454,74 @@ POTRF_LAUNCHER(std::complex<double>, cusolverDnZpotrf)
 
 #undef POTRF_LAUNCHER
 
-void potri(sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n, sycl::buffer<float> &a,
-           std::int64_t lda, sycl::buffer<float> &scratchpad, std::int64_t scratchpad_size) {
-    throw unimplemented("lapack", "potri");
+template <typename Func, typename T>
+inline void potri(Func func, sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n,
+                  sycl::buffer<T> &a, std::int64_t lda, sycl::buffer<T> &scratchpad,
+                  std::int64_t scratchpad_size) {
+    using cuDataType = typename CudaEquivalentType<T>::Type;
+    overflow_check(n, lda, scratchpad_size);
+    queue.submit([&](cl::sycl::handler &cgh) {
+        auto a_acc = a.template get_access<cl::sycl::access::mode::read_write>(cgh);
+        auto scratch_acc = scratchpad.template get_access<cl::sycl::access::mode::read_write>(cgh);
+        onemkl_cusolver_host_task(cgh, queue, [=](CusolverScopedContextHandler &sc) {
+            auto handle = sc.get_handle(queue);
+            auto a_ = sc.get_mem<cuDataType *>(a_acc);
+            auto scratch_ = sc.get_mem<cuDataType *>(scratch_acc);
+            cusolverStatus_t err;
+            CUSOLVER_ERROR_FUNC(func, err, handle, get_cublas_fill_mode(uplo), n, a_, lda, scratch_,
+                                scratchpad_size, nullptr);
+        });
+    });
 }
-void potri(sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n, sycl::buffer<double> &a,
-           std::int64_t lda, sycl::buffer<double> &scratchpad, std::int64_t scratchpad_size) {
-    throw unimplemented("lapack", "potri");
+
+#define POTRI_LAUNCHER(TYPE, CUSOLVER_ROUTINE)                                                    \
+    void potri(sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n, sycl::buffer<TYPE> &a, \
+               std::int64_t lda, sycl::buffer<TYPE> &scratchpad, std::int64_t scratchpad_size) {  \
+        potri(CUSOLVER_ROUTINE, queue, uplo, n, a, lda, scratchpad, scratchpad_size);             \
+    }
+
+POTRI_LAUNCHER(float, cusolverDnSpotri)
+POTRI_LAUNCHER(double, cusolverDnDpotri)
+POTRI_LAUNCHER(std::complex<float>, cusolverDnCpotri)
+POTRI_LAUNCHER(std::complex<double>, cusolverDnZpotri)
+
+#undef POTRI_LAUNCHER
+
+template <typename Func, typename T>
+inline void potrs(Func func, sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n,
+                  std::int64_t nrhs, sycl::buffer<T> &a, std::int64_t lda, sycl::buffer<T> &b,
+                  std::int64_t ldb, sycl::buffer<T> &scratchpad, std::int64_t scratchpad_size) {
+    using cuDataType = typename CudaEquivalentType<T>::Type;
+    overflow_check(n, nrhs, lda, ldb, scratchpad_size);
+    queue.submit([&](cl::sycl::handler &cgh) {
+        auto a_acc = a.template get_access<cl::sycl::access::mode::read>(cgh);
+        auto b_acc = b.template get_access<cl::sycl::access::mode::read_write>(cgh);
+        onemkl_cusolver_host_task(cgh, queue, [=](CusolverScopedContextHandler &sc) {
+            auto handle = sc.get_handle(queue);
+            auto a_ = sc.get_mem<cuDataType *>(a_acc);
+            auto b_ = sc.get_mem<cuDataType *>(b_acc);
+            cusolverStatus_t err;
+            CUSOLVER_ERROR_FUNC(func, err, handle, get_cublas_fill_mode(uplo), n, nrhs, a_, lda, b_,
+                                ldb, nullptr);
+        });
+    });
 }
-void potri(sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n,
-           sycl::buffer<std::complex<float>> &a, std::int64_t lda,
-           sycl::buffer<std::complex<float>> &scratchpad, std::int64_t scratchpad_size) {
-    throw unimplemented("lapack", "potri");
-}
-void potri(sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n,
-           sycl::buffer<std::complex<double>> &a, std::int64_t lda,
-           sycl::buffer<std::complex<double>> &scratchpad, std::int64_t scratchpad_size) {
-    throw unimplemented("lapack", "potri");
-}
-void potrs(sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n, std::int64_t nrhs,
-           sycl::buffer<float> &a, std::int64_t lda, sycl::buffer<float> &b, std::int64_t ldb,
-           sycl::buffer<float> &scratchpad, std::int64_t scratchpad_size) {
-    throw unimplemented("lapack", "potrs");
-}
-void potrs(sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n, std::int64_t nrhs,
-           sycl::buffer<double> &a, std::int64_t lda, sycl::buffer<double> &b, std::int64_t ldb,
-           sycl::buffer<double> &scratchpad, std::int64_t scratchpad_size) {
-    throw unimplemented("lapack", "potrs");
-}
-void potrs(sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n, std::int64_t nrhs,
-           sycl::buffer<std::complex<float>> &a, std::int64_t lda,
-           sycl::buffer<std::complex<float>> &b, std::int64_t ldb,
-           sycl::buffer<std::complex<float>> &scratchpad, std::int64_t scratchpad_size) {
-    throw unimplemented("lapack", "potrs");
-}
-void potrs(sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n, std::int64_t nrhs,
-           sycl::buffer<std::complex<double>> &a, std::int64_t lda,
-           sycl::buffer<std::complex<double>> &b, std::int64_t ldb,
-           sycl::buffer<std::complex<double>> &scratchpad, std::int64_t scratchpad_size) {
-    throw unimplemented("lapack", "potrs");
-}
+
+#define POTRS_LAUNCHER(TYPE, CUSOLVER_ROUTINE)                                                   \
+    void potrs(sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n, std::int64_t nrhs,    \
+               sycl::buffer<TYPE> &a, std::int64_t lda, sycl::buffer<TYPE> &b, std::int64_t ldb, \
+               sycl::buffer<TYPE> &scratchpad, std::int64_t scratchpad_size) {                   \
+        potrs(CUSOLVER_ROUTINE, queue, uplo, n, nrhs, a, lda, b, ldb, scratchpad,                \
+              scratchpad_size);                                                                  \
+    }
+
+POTRS_LAUNCHER(float, cusolverDnSpotrs)
+POTRS_LAUNCHER(double, cusolverDnDpotrs)
+POTRS_LAUNCHER(std::complex<float>, cusolverDnCpotrs)
+POTRS_LAUNCHER(std::complex<double>, cusolverDnZpotrs)
+
+#undef POTRS_LAUNCHER
+
 void syevd(sycl::queue &queue, oneapi::mkl::job jobz, oneapi::mkl::uplo uplo, std::int64_t n,
            sycl::buffer<double> &a, std::int64_t lda, sycl::buffer<double> &w,
            sycl::buffer<double> &scratchpad, std::int64_t scratchpad_size) {
@@ -1638,50 +1666,50 @@ POTRF_LAUNCHER_SCRATCH(std::complex<double>, cusolverDnZpotrf_bufferSize)
 
 #undef POTRF_LAUNCHER_SCRATCH
 
-template <>
-std::int64_t potrs_scratchpad_size<float>(sycl::queue &queue, oneapi::mkl::uplo uplo,
-                                          std::int64_t n, std::int64_t nrhs, std::int64_t lda,
-                                          std::int64_t ldb) {
-    throw unimplemented("lapack", "potrs_scratchpad_size");
+#define POTRS_LAUNCHER_SCRATCH(TYPE)                                                              \
+    template <>                                                                                   \
+    std::int64_t potrs_scratchpad_size<TYPE>(sycl::queue & queue, oneapi::mkl::uplo uplo,         \
+                                             std::int64_t n, std::int64_t nrhs, std::int64_t lda, \
+                                             std::int64_t ldb) {                                  \
+        return 0;                                                                                 \
+    }
+
+POTRS_LAUNCHER_SCRATCH(float)
+POTRS_LAUNCHER_SCRATCH(double)
+POTRS_LAUNCHER_SCRATCH(std::complex<float>)
+POTRS_LAUNCHER_SCRATCH(std::complex<double>)
+
+#undef POTRS_LAUNCHER_SCRATCH
+
+template <typename Func>
+inline void potri_scratchpad_size(Func func, sycl::queue &queue, oneapi::mkl::uplo uplo,
+                                  std::int64_t n, std::int64_t lda, int *scratch_size) {
+    queue.submit([&](cl::sycl::handler &cgh) {
+        onemkl_cusolver_host_task(cgh, queue, [=](CusolverScopedContextHandler &sc) {
+            auto handle = sc.get_handle(queue);
+            cusolverStatus_t err;
+            CUSOLVER_ERROR_FUNC(func, err, handle, get_cublas_fill_mode(uplo), n, nullptr, lda,
+                                scratch_size);
+        });
+    });
 }
-template <>
-std::int64_t potrs_scratchpad_size<double>(sycl::queue &queue, oneapi::mkl::uplo uplo,
-                                           std::int64_t n, std::int64_t nrhs, std::int64_t lda,
-                                           std::int64_t ldb) {
-    throw unimplemented("lapack", "potrs_scratchpad_size");
-}
-template <>
-std::int64_t potrs_scratchpad_size<std::complex<float>>(sycl::queue &queue, oneapi::mkl::uplo uplo,
-                                                        std::int64_t n, std::int64_t nrhs,
-                                                        std::int64_t lda, std::int64_t ldb) {
-    throw unimplemented("lapack", "potrs_scratchpad_size");
-}
-template <>
-std::int64_t potrs_scratchpad_size<std::complex<double>>(sycl::queue &queue, oneapi::mkl::uplo uplo,
-                                                         std::int64_t n, std::int64_t nrhs,
-                                                         std::int64_t lda, std::int64_t ldb) {
-    throw unimplemented("lapack", "potrs_scratchpad_size");
-}
-template <>
-std::int64_t potri_scratchpad_size<float>(sycl::queue &queue, oneapi::mkl::uplo uplo,
-                                          std::int64_t n, std::int64_t lda) {
-    throw unimplemented("lapack", "potri_scratchpad_size");
-}
-template <>
-std::int64_t potri_scratchpad_size<double>(sycl::queue &queue, oneapi::mkl::uplo uplo,
-                                           std::int64_t n, std::int64_t lda) {
-    throw unimplemented("lapack", "potri_scratchpad_size");
-}
-template <>
-std::int64_t potri_scratchpad_size<std::complex<float>>(sycl::queue &queue, oneapi::mkl::uplo uplo,
-                                                        std::int64_t n, std::int64_t lda) {
-    throw unimplemented("lapack", "potri_scratchpad_size");
-}
-template <>
-std::int64_t potri_scratchpad_size<std::complex<double>>(sycl::queue &queue, oneapi::mkl::uplo uplo,
-                                                         std::int64_t n, std::int64_t lda) {
-    throw unimplemented("lapack", "potri_scratchpad_size");
-}
+
+#define POTRI_LAUNCHER_SCRATCH(TYPE, CUSOLVER_ROUTINE)                                    \
+    template <>                                                                           \
+    std::int64_t potri_scratchpad_size<TYPE>(sycl::queue & queue, oneapi::mkl::uplo uplo, \
+                                             std::int64_t n, std::int64_t lda) {          \
+        int scratch_size;                                                                 \
+        potri_scratchpad_size(CUSOLVER_ROUTINE, queue, uplo, n, lda, &scratch_size);      \
+        return scratch_size;                                                              \
+    }
+
+POTRI_LAUNCHER_SCRATCH(float, cusolverDnSpotri_bufferSize)
+POTRI_LAUNCHER_SCRATCH(double, cusolverDnDpotri_bufferSize)
+POTRI_LAUNCHER_SCRATCH(std::complex<float>, cusolverDnCpotri_bufferSize)
+POTRI_LAUNCHER_SCRATCH(std::complex<double>, cusolverDnZpotri_bufferSize)
+
+#undef POTRI_LAUNCHER_SCRATCH
+
 template <>
 std::int64_t sytrf_scratchpad_size<float>(sycl::queue &queue, oneapi::mkl::uplo uplo,
                                           std::int64_t n, std::int64_t lda) {
