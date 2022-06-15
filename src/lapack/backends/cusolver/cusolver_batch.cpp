@@ -467,7 +467,7 @@ sycl::event orgqr_batch(sycl::queue &queue, std::int64_t *m, std::int64_t *n, st
     throw unimplemented("lapack", "orgqr_batch");
 }
 template <typename Func, typename T>
-inline sycl::event potrf_batch(Func func, sycl::queue &queue, oneapi::mkl::uplo uplo,
+inline sycl::event potrf_batch(const char *func_name, Func func, sycl::queue &queue, oneapi::mkl::uplo uplo,
                                std::int64_t n, T *a, std::int64_t lda, std::int64_t stride_a,
                                std::int64_t batch_size, T *scratchpad, std::int64_t scratchpad_size,
                                const std::vector<sycl::event> &dependencies) {
@@ -496,7 +496,7 @@ inline sycl::event potrf_batch(Func func, sycl::queue &queue, oneapi::mkl::uplo 
             cusolverStatus_t err;
 
             auto **a_ = reinterpret_cast<cuDataType **>(a_dev);
-            CUSOLVER_ERROR_FUNC_T(func, err, handle, get_cublas_fill_mode(uplo), (int)n, a_, (int)lda,
+            CUSOLVER_ERROR_FUNC_T(func_name, func, err, handle, get_cublas_fill_mode(uplo), (int)n, a_, (int)lda,
                                 nullptr, (int)batch_size);
 
             sycl::free(a_dev, queue);
@@ -511,8 +511,8 @@ inline sycl::event potrf_batch(Func func, sycl::queue &queue, oneapi::mkl::uplo 
                             std::int64_t lda, std::int64_t stride_a, std::int64_t batch_size,    \
                             TYPE *scratchpad, std::int64_t scratchpad_size,                      \
                             const std::vector<sycl::event> &dependencies) {                      \
-        return potrf_batch(CUSOLVER_ROUTINE, queue, uplo, n, a, lda, group_count, group_sizes,   \
-                           scratchpad, scratchpad_size, dependencies);                           \
+        return potrf_batch(#CUSOLVER_ROUTINE, CUSOLVER_ROUTINE, queue, uplo, n, a, lda, stride_a, \
+        batch_size, scratchpad, scratchpad_size, dependencies);                           \
     }
 
 POTRF_BATCH_LAUNCHER_USM(float, cusolverDnSpotrfBatched)
@@ -835,8 +835,9 @@ std::int64_t geqrf_batch_scratchpad_size<std::complex<double>>(sycl::queue &queu
 #define POTRF_GROUP_LAUNCHER_SCRATCH(TYPE)                                                   \
     template <>                                                                              \
     std::int64_t potrf_batch_scratchpad_size<TYPE>(                                          \
-        sycl::queue & queue, oneapi::mkl::uplo * uplo, std::int64_t * n, std::int64_t * lda, \
-        std::int64_t group_count, std::int64_t * group_sizes) {                              \
+    sycl::queue &queue, oneapi::mkl::uplo uplo, \
+    std::int64_t n, std::int64_t lda, \
+    std::int64_t stride_a, std::int64_t batch_size) { \
         return 0;                                                                            \
     }
 
