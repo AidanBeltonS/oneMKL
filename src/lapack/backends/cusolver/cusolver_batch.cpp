@@ -466,32 +466,61 @@ sycl::event orgqr_batch(sycl::queue &queue, std::int64_t *m, std::int64_t *n, st
                         const std::vector<sycl::event> &dependencies) {
     throw unimplemented("lapack", "orgqr_batch");
 }
-sycl::event potrf_batch(sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n, float *a,
-                        std::int64_t lda, std::int64_t stride_a, std::int64_t batch_size,
-                        float *scratchpad, std::int64_t scratchpad_size,
-                        const std::vector<sycl::event> &dependencies) {
-    throw unimplemented("lapack", "potrf_batch");
+template <typename Func, typename T>
+inline sycl::event potrf_batch(Func func, sycl::queue &queue, oneapi::mkl::uplo uplo,
+                               std::int64_t n, T *a, std::int64_t lda, std::int64_t stride_a,
+                               std::int64_t batch_size, T *scratchpad, std::int64_t scratchpad_size,
+                               const std::vector<sycl::event> &dependencies) {
+    using cuDataType = typename CudaEquivalentType<T>::Type;
+
+    overflow_check(n, lda, stride_a);
+
+    // Transform ptr and stride to list of ptr's
+    T **a_batched = (T **)malloc(sizeof(T *) * batch_size);
+    for (int64_t i = 0; i < batch_size; i++)
+      a_batched[i] = a + i*stride_a;
+
+    T **a_dev = (T **)malloc_device(sizeof(T *) * batch_size, queue);
+    auto done_cpy =
+        queue.submit([&](sycl::handler &h) { h.memcpy(a_dev, a_batched, batch_size * sizeof(T *)); });
+
+    auto done = queue.submit([&](cl::sycl::handler &cgh) {
+        int64_t num_events = dependencies.size();
+        for (int64_t i = 0; i < num_events; i++) {
+            cgh.depends_on(dependencies[i]);
+        }
+        cgh.depends_on(done_cpy);
+        onemkl_cusolver_host_task(cgh, queue, [=](CusolverScopedContextHandler &sc) {
+            auto handle = sc.get_handle(queue);
+            int64_t offset = 0;
+            cusolverStatus_t err;
+
+            auto **a_ = reinterpret_cast<cuDataType **>(a_dev);
+            CUSOLVER_ERROR_FUNC_T(func, err, handle, get_cublas_fill_mode(uplo), (int)n, a_, (int)lda,
+                                nullptr, (int)batch_size);
+
+            sycl::free(a_dev, queue);
+        });
+    });
+    return done;
 }
-sycl::event potrf_batch(sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n, double *a,
-                        std::int64_t lda, std::int64_t stride_a, std::int64_t batch_size,
-                        double *scratchpad, std::int64_t scratchpad_size,
-                        const std::vector<sycl::event> &dependencies) {
-    throw unimplemented("lapack", "potrf_batch");
-}
-sycl::event potrf_batch(sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n,
-                        std::complex<float> *a, std::int64_t lda, std::int64_t stride_a,
-                        std::int64_t batch_size, std::complex<float> *scratchpad,
-                        std::int64_t scratchpad_size,
-                        const std::vector<sycl::event> &dependencies) {
-    throw unimplemented("lapack", "potrf_batch");
-}
-sycl::event potrf_batch(sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n,
-                        std::complex<double> *a, std::int64_t lda, std::int64_t stride_a,
-                        std::int64_t batch_size, std::complex<double> *scratchpad,
-                        std::int64_t scratchpad_size,
-                        const std::vector<sycl::event> &dependencies) {
-    throw unimplemented("lapack", "potrf_batch");
-}
+
+// Scratchpad memory not needed as parts of buffer a is used as workspace memory
+#define POTRF_BATCH_LAUNCHER_USM(TYPE, CUSOLVER_ROUTINE)                                         \
+    sycl::event potrf_batch(sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n, TYPE *a, \
+                            std::int64_t lda, std::int64_t stride_a, std::int64_t batch_size,    \
+                            TYPE *scratchpad, std::int64_t scratchpad_size,                      \
+                            const std::vector<sycl::event> &dependencies) {                      \
+        return potrf_batch(CUSOLVER_ROUTINE, queue, uplo, n, a, lda, group_count, group_sizes,   \
+                           scratchpad, scratchpad_size, dependencies);                           \
+    }
+
+POTRF_BATCH_LAUNCHER_USM(float, cusolverDnSpotrfBatched)
+POTRF_BATCH_LAUNCHER_USM(double, cusolverDnDpotrfBatched)
+POTRF_BATCH_LAUNCHER_USM(std::complex<float>, cusolverDnCpotrfBatched)
+POTRF_BATCH_LAUNCHER_USM(std::complex<double>, cusolverDnZpotrfBatched)
+
+#undef POTRF_BATCH_LAUNCHER_USM
 
 template <typename Func, typename T>
 inline sycl::event potrf_batch(const char *func_name, Func func, sycl::queue &queue,
@@ -802,34 +831,22 @@ std::int64_t geqrf_batch_scratchpad_size<std::complex<double>>(sycl::queue &queu
     throw unimplemented("lapack", "geqrf_batch_scratchpad_size");
 }
 
-template <>
-std::int64_t potrf_batch_scratchpad_size<float>(sycl::queue &queue, oneapi::mkl::uplo uplo,
-                                                std::int64_t n, std::int64_t lda,
-                                                std::int64_t stride_a, std::int64_t batch_size) {
-    throw unimplemented("lapack", "potrf_batch_scratchpad_size");
-}
-template <>
-std::int64_t potrf_batch_scratchpad_size<double>(sycl::queue &queue, oneapi::mkl::uplo uplo,
-                                                 std::int64_t n, std::int64_t lda,
-                                                 std::int64_t stride_a, std::int64_t batch_size) {
-    throw unimplemented("lapack", "potrf_batch_scratchpad_size");
-}
-template <>
-std::int64_t potrf_batch_scratchpad_size<std::complex<float>>(sycl::queue &queue,
-                                                              oneapi::mkl::uplo uplo,
-                                                              std::int64_t n, std::int64_t lda,
-                                                              std::int64_t stride_a,
-                                                              std::int64_t batch_size) {
-    throw unimplemented("lapack", "potrf_batch_scratchpad_size");
-}
-template <>
-std::int64_t potrf_batch_scratchpad_size<std::complex<double>>(sycl::queue &queue,
-                                                               oneapi::mkl::uplo uplo,
-                                                               std::int64_t n, std::int64_t lda,
-                                                               std::int64_t stride_a,
-                                                               std::int64_t batch_size) {
-    throw unimplemented("lapack", "potrf_batch_scratchpad_size");
-}
+// cusolverDnXpotrfBatched does not use scratchpad memory
+#define POTRF_GROUP_LAUNCHER_SCRATCH(TYPE)                                                   \
+    template <>                                                                              \
+    std::int64_t potrf_batch_scratchpad_size<TYPE>(                                          \
+        sycl::queue & queue, oneapi::mkl::uplo * uplo, std::int64_t * n, std::int64_t * lda, \
+        std::int64_t group_count, std::int64_t * group_sizes) {                              \
+        return 0;                                                                            \
+    }
+
+POTRF_GROUP_LAUNCHER_SCRATCH(float)
+POTRF_GROUP_LAUNCHER_SCRATCH(double)
+POTRF_GROUP_LAUNCHER_SCRATCH(std::complex<float>)
+POTRF_GROUP_LAUNCHER_SCRATCH(std::complex<double>)
+
+#undef POTRF_GROUP_LAUNCHER_SCRATCH
+
 template <>
 std::int64_t potrs_batch_scratchpad_size<float>(sycl::queue &queue, oneapi::mkl::uplo uplo,
                                                 std::int64_t n, std::int64_t nrhs, std::int64_t lda,
