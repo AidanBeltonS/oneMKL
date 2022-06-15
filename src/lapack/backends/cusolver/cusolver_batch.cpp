@@ -376,40 +376,75 @@ sycl::event getri_batch(sycl::queue &queue, std::int64_t *n, std::complex<double
                         const std::vector<sycl::event> &dependencies) {
     throw unimplemented("lapack", "getri_batch");
 }
-sycl::event getrs_batch(sycl::queue &queue, oneapi::mkl::transpose trans, std::int64_t n,
-                        std::int64_t nrhs, float *a, std::int64_t lda, std::int64_t stride_a,
-                        std::int64_t *ipiv, std::int64_t stride_ipiv, float *b, std::int64_t ldb,
-                        std::int64_t stride_b, std::int64_t batch_size, float *scratchpad,
-                        std::int64_t scratchpad_size,
-                        const std::vector<sycl::event> &dependencies) {
-    throw unimplemented("lapack", "getrs_batch");
+
+template <typename Func, typename T>
+inline sycl::event getrs_batch(Func func, sycl::queue &queue, oneapi::mkl::transpose trans,
+                               std::int64_t n, std::int64_t nrhs, T *a, std::int64_t lda,
+                               std::int64_t stride_a, std::int64_t *ipiv, std::int64_t stride_ipiv,
+                               T *b, std::int64_t ldb, std::int64_t stride_b,
+                               std::int64_t batch_size, T *scratchpad, std::int64_t scratchpad_size,
+                               const std::vector<sycl::event> &dependencies) {
+    using cuDataType = typename CudaEquivalentType<T>::Type;
+
+    overflow_check(n, nrhs, lda, ldb, ipiv, stride_ipiv, stride_b, batch_size, scratchpad_size);
+
+
+
+
+
+    // cuSolver legacy api does not accept 64-bit ints.
+    // To get around the limitation.
+    // Create new buffer and convert 64-bit values.
+    std::uint64_t ipiv_size = n;
+    int *ipiv32 = (int *)malloc_device(sizeof(int) * ipiv_size, queue);
+
+    auto done_casting = queue.submit([&](sycl::handler &cgh) {
+        cgh.parallel_for(sycl::range<1>{ ipiv_size }, [=](sycl::id<1> index) {
+            ipiv32[index] = static_cast<std::int32_t>(ipiv[index]);
+        });
+    });
+
+    auto done = queue.submit([&](sycl::handler &cgh) {
+        int64_t num_events = dependencies.size();
+        for (int64_t i = 0; i < num_events; i++) {
+            cgh.depends_on(dependencies[i]);
+        }
+        cgh.depends_on(done_casting);
+        onemkl_cusolver_host_task(cgh, queue, [=](CusolverScopedContextHandler &sc) {
+            auto handle = sc.get_handle(queue);
+            auto a_ = reinterpret_cast<cuDataType *>(a);
+            auto ipiv_ = reinterpret_cast<int *>(ipiv32);
+            auto b_ = reinterpret_cast<cuDataType *>(b);
+            cusolverStatus_t err;
+            CUSOLVER_ERROR_FUNC_T(func_name, func, err, handle, get_cublas_operation(trans), n,
+                                  nrhs, a_, lda, ipiv_, b_, ldb, nullptr);
+        });
+    });
+
+    queue.wait();
+
+    free(ipiv32, queue);
 }
-sycl::event getrs_batch(sycl::queue &queue, oneapi::mkl::transpose trans, std::int64_t n,
-                        std::int64_t nrhs, double *a, std::int64_t lda, std::int64_t stride_a,
-                        std::int64_t *ipiv, std::int64_t stride_ipiv, double *b, std::int64_t ldb,
-                        std::int64_t stride_b, std::int64_t batch_size, double *scratchpad,
-                        std::int64_t scratchpad_size,
-                        const std::vector<sycl::event> &dependencies) {
-    throw unimplemented("lapack", "getrs_batch");
-}
-sycl::event getrs_batch(sycl::queue &queue, oneapi::mkl::transpose trans, std::int64_t n,
-                        std::int64_t nrhs, std::complex<float> *a, std::int64_t lda,
-                        std::int64_t stride_a, std::int64_t *ipiv, std::int64_t stride_ipiv,
-                        std::complex<float> *b, std::int64_t ldb, std::int64_t stride_b,
-                        std::int64_t batch_size, std::complex<float> *scratchpad,
-                        std::int64_t scratchpad_size,
-                        const std::vector<sycl::event> &dependencies) {
-    throw unimplemented("lapack", "getrs_batch");
-}
-sycl::event getrs_batch(sycl::queue &queue, oneapi::mkl::transpose trans, std::int64_t n,
-                        std::int64_t nrhs, std::complex<double> *a, std::int64_t lda,
-                        std::int64_t stride_a, std::int64_t *ipiv, std::int64_t stride_ipiv,
-                        std::complex<double> *b, std::int64_t ldb, std::int64_t stride_b,
-                        std::int64_t batch_size, std::complex<double> *scratchpad,
-                        std::int64_t scratchpad_size,
-                        const std::vector<sycl::event> &dependencies) {
-    throw unimplemented("lapack", "getrs_batch");
-}
+
+// Scratchpad memory not needed as parts of buffer a is used as workspace memory
+#define GETRS_BATCH_LAUNCHER_USM(TYPE, CUSOLVER_ROUTINE)                                         \
+    sycl::event getrs_batch(sycl::queue &queue, oneapi::mkl::transpose trans, std::int64_t n,    \
+                            std::int64_t nrhs, TYPE *a, std::int64_t lda, std::int64_t stride_a, \
+                            std::int64_t *ipiv, std::int64_t stride_ipiv, TYPE *b,               \
+                            std::int64_t ldb, std::int64_t stride_b, std::int64_t batch_size,    \
+                            TYPE *scratchpad, std::int64_t scratchpad_size,                      \
+                            const std::vector<sycl::event> &dependencies) {                      \
+        return getrs_batch(CUSOLVER_ROUTINE, queue, uplo, n, a, lda, group_count, group_sizes,   \
+                           scratchpad, scratchpad_size, dependencies);                           \
+    }
+
+GETRS_BATCH_LAUNCHER_USM(float, cusolverDnSgetrsBatched)
+GETRS_BATCH_LAUNCHER_USM(double, cusolverDnDgetrsBatched)
+GETRS_BATCH_LAUNCHER_USM(std::complex<float>, cusolverDnCgetrsBatched)
+GETRS_BATCH_LAUNCHER_USM(std::complex<double>, cusolverDnZgetrsBatched)
+
+#undef GETRS_BATCH_LAUNCHER_USM
+
 sycl::event getrs_batch(sycl::queue &queue, oneapi::mkl::transpose *trans, std::int64_t *n,
                         std::int64_t *nrhs, float **a, std::int64_t *lda, std::int64_t **ipiv,
                         float **b, std::int64_t *ldb, std::int64_t group_count,
@@ -478,11 +513,11 @@ inline sycl::event potrf_batch(const char *func_name, Func func, sycl::queue &qu
     // Transform ptr and stride to list of ptr's
     T **a_batched = (T **)malloc(sizeof(T *) * batch_size);
     for (int64_t i = 0; i < batch_size; i++)
-      a_batched[i] = a + i*stride_a;
+        a_batched[i] = a + i * stride_a;
 
     T **a_dev = (T **)malloc_device(sizeof(T *) * batch_size, queue);
-    auto done_cpy =
-        queue.submit([&](sycl::handler &h) { h.memcpy(a_dev, a_batched, batch_size * sizeof(T *)); });
+    auto done_cpy = queue.submit(
+        [&](sycl::handler &h) { h.memcpy(a_dev, a_batched, batch_size * sizeof(T *)); });
 
     auto done = queue.submit([&](cl::sycl::handler &cgh) {
         int64_t num_events = dependencies.size();
@@ -496,8 +531,8 @@ inline sycl::event potrf_batch(const char *func_name, Func func, sycl::queue &qu
             cusolverStatus_t err;
 
             auto **a_ = reinterpret_cast<cuDataType **>(a_dev);
-            CUSOLVER_ERROR_FUNC_T(func_name, func, err, handle, get_cublas_fill_mode(uplo), (int)n, a_, (int)lda,
-                                nullptr, (int)batch_size);
+            CUSOLVER_ERROR_FUNC_T(func, err, handle, get_cublas_fill_mode(uplo), (int)n, a_,
+                                  (int)lda, nullptr, (int)batch_size);
 
             sycl::free(a_dev, queue);
         });
@@ -772,36 +807,24 @@ std::int64_t getri_batch_scratchpad_size<std::complex<double>>(sycl::queue &queu
                                                                std::int64_t batch_size) {
     throw unimplemented("lapack", "getri_batch_scratchpad_size");
 }
-template <>
-std::int64_t getrs_batch_scratchpad_size<float>(sycl::queue &queue, oneapi::mkl::transpose trans,
-                                                std::int64_t n, std::int64_t nrhs, std::int64_t lda,
-                                                std::int64_t stride_a, std::int64_t stride_ipiv,
-                                                std::int64_t ldb, std::int64_t stride_b,
-                                                std::int64_t batch_size) {
-    throw unimplemented("lapack", "getrs_batch_scratchpad_size");
-}
-template <>
-std::int64_t getrs_batch_scratchpad_size<double>(sycl::queue &queue, oneapi::mkl::transpose trans,
-                                                 std::int64_t n, std::int64_t nrhs,
-                                                 std::int64_t lda, std::int64_t stride_a,
-                                                 std::int64_t stride_ipiv, std::int64_t ldb,
-                                                 std::int64_t stride_b, std::int64_t batch_size) {
-    throw unimplemented("lapack", "getrs_batch_scratchpad_size");
-}
-template <>
-std::int64_t getrs_batch_scratchpad_size<std::complex<float>>(
-    sycl::queue &queue, oneapi::mkl::transpose trans, std::int64_t n, std::int64_t nrhs,
-    std::int64_t lda, std::int64_t stride_a, std::int64_t stride_ipiv, std::int64_t ldb,
-    std::int64_t stride_b, std::int64_t batch_size) {
-    throw unimplemented("lapack", "getrs_batch_scratchpad_size");
-}
-template <>
-std::int64_t getrs_batch_scratchpad_size<std::complex<double>>(
-    sycl::queue &queue, oneapi::mkl::transpose trans, std::int64_t n, std::int64_t nrhs,
-    std::int64_t lda, std::int64_t stride_a, std::int64_t stride_ipiv, std::int64_t ldb,
-    std::int64_t stride_b, std::int64_t batch_size) {
-    throw unimplemented("lapack", "getrs_batch_scratchpad_size");
-}
+
+// cusolverDnXgetrs does not use scratchpad memory
+#define GETRS_GROUP_LAUNCHER_SCRATCH(TYPE)                                                      \
+    template <>                                                                                 \
+    std::int64_t getrs_batch_scratchpad_size<TYPE>(                                             \
+        sycl::queue & queue, sycl::queue & queue, oneapi::mkl::transpose trans, std::int64_t n, \
+        std::int64_t nrhs, std::int64_t lda, std::int64_t stride_a, std::int64_t stride_ipiv,   \
+        std::int64_t ldb, std::int64_t stride_b, std::int64_t batch_size) {                     \
+        return 0;                                                                               \
+    }
+
+GETRS_GROUP_LAUNCHER_SCRATCH(float)
+GETRS_GROUP_LAUNCHER_SCRATCH(double)
+GETRS_GROUP_LAUNCHER_SCRATCH(std::complex<float>)
+GETRS_GROUP_LAUNCHER_SCRATCH(std::complex<double>)
+
+#undef GETRS_GROUP_LAUNCHER_SCRATCH
+
 template <>
 std::int64_t geqrf_batch_scratchpad_size<float>(sycl::queue &queue, std::int64_t m, std::int64_t n,
                                                 std::int64_t lda, std::int64_t stride_a,
