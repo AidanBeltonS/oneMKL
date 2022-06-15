@@ -388,14 +388,10 @@ inline sycl::event getrs_batch(Func func, sycl::queue &queue, oneapi::mkl::trans
 
     overflow_check(n, nrhs, lda, ldb, ipiv, stride_ipiv, stride_b, batch_size, scratchpad_size);
 
-
-
-
-
     // cuSolver legacy api does not accept 64-bit ints.
     // To get around the limitation.
     // Create new buffer and convert 64-bit values.
-    std::uint64_t ipiv_size = n;
+    std::uint64_t ipiv_size = stride_ipiv * batch_size;
     int *ipiv32 = (int *)malloc_device(sizeof(int) * ipiv_size, queue);
 
     auto done_casting = queue.submit([&](sycl::handler &cgh) {
@@ -415,15 +411,17 @@ inline sycl::event getrs_batch(Func func, sycl::queue &queue, oneapi::mkl::trans
             auto a_ = reinterpret_cast<cuDataType *>(a);
             auto ipiv_ = reinterpret_cast<int *>(ipiv32);
             auto b_ = reinterpret_cast<cuDataType *>(b);
-            cusolverStatus_t err;
-            CUSOLVER_ERROR_FUNC_T(func_name, func, err, handle, get_cublas_operation(trans), n,
-                                  nrhs, a_, lda, ipiv_, b_, ldb, nullptr);
+
+            for (int64_t i = 0; i < batch_size; ++i) {
+                cusolverStatus_t err;
+                CUSOLVER_ERROR_FUNC_T(func_name, func, err, handle, get_cublas_operation(trans), n,
+                                      nrhs, a_ + stride_a * i, lda, ipiv_ + stride_ipiv * i,
+                                      b_ + stride_b * i, ldb, nullptr);
+            }
         });
+
+        free(ipiv32, queue);
     });
-
-    queue.wait();
-
-    free(ipiv32, queue);
 }
 
 // Scratchpad memory not needed as parts of buffer a is used as workspace memory
@@ -502,9 +500,10 @@ sycl::event orgqr_batch(sycl::queue &queue, std::int64_t *m, std::int64_t *n, st
     throw unimplemented("lapack", "orgqr_batch");
 }
 template <typename Func, typename T>
-inline sycl::event potrf_batch(const char *func_name, Func func, sycl::queue &queue, oneapi::mkl::uplo uplo,
-                               std::int64_t n, T *a, std::int64_t lda, std::int64_t stride_a,
-                               std::int64_t batch_size, T *scratchpad, std::int64_t scratchpad_size,
+inline sycl::event potrf_batch(const char *func_name, Func func, sycl::queue &queue,
+                               oneapi::mkl::uplo uplo, std::int64_t n, T *a, std::int64_t lda,
+                               std::int64_t stride_a, std::int64_t batch_size, T *scratchpad,
+                               std::int64_t scratchpad_size,
                                const std::vector<sycl::event> &dependencies) {
     using cuDataType = typename CudaEquivalentType<T>::Type;
 
@@ -541,13 +540,13 @@ inline sycl::event potrf_batch(const char *func_name, Func func, sycl::queue &qu
 }
 
 // Scratchpad memory not needed as parts of buffer a is used as workspace memory
-#define POTRF_BATCH_LAUNCHER_USM(TYPE, CUSOLVER_ROUTINE)                                         \
-    sycl::event potrf_batch(sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n, TYPE *a, \
-                            std::int64_t lda, std::int64_t stride_a, std::int64_t batch_size,    \
-                            TYPE *scratchpad, std::int64_t scratchpad_size,                      \
-                            const std::vector<sycl::event> &dependencies) {                      \
+#define POTRF_BATCH_LAUNCHER_USM(TYPE, CUSOLVER_ROUTINE)                                          \
+    sycl::event potrf_batch(sycl::queue &queue, oneapi::mkl::uplo uplo, std::int64_t n, TYPE *a,  \
+                            std::int64_t lda, std::int64_t stride_a, std::int64_t batch_size,     \
+                            TYPE *scratchpad, std::int64_t scratchpad_size,                       \
+                            const std::vector<sycl::event> &dependencies) {                       \
         return potrf_batch(#CUSOLVER_ROUTINE, CUSOLVER_ROUTINE, queue, uplo, n, a, lda, stride_a, \
-        batch_size, scratchpad, scratchpad_size, dependencies);                           \
+                           batch_size, scratchpad, scratchpad_size, dependencies);                \
     }
 
 POTRF_BATCH_LAUNCHER_USM(float, cusolverDnSpotrfBatched)
@@ -855,13 +854,12 @@ std::int64_t geqrf_batch_scratchpad_size<std::complex<double>>(sycl::queue &queu
 }
 
 // cusolverDnXpotrfBatched does not use scratchpad memory
-#define POTRF_GROUP_LAUNCHER_SCRATCH(TYPE)                                                   \
-    template <>                                                                              \
-    std::int64_t potrf_batch_scratchpad_size<TYPE>(                                          \
-    sycl::queue &queue, oneapi::mkl::uplo uplo, \
-    std::int64_t n, std::int64_t lda, \
-    std::int64_t stride_a, std::int64_t batch_size) { \
-        return 0;                                                                            \
+#define POTRF_GROUP_LAUNCHER_SCRATCH(TYPE)                                             \
+    template <>                                                                        \
+    std::int64_t potrf_batch_scratchpad_size<TYPE>(                                    \
+        sycl::queue & queue, oneapi::mkl::uplo uplo, std::int64_t n, std::int64_t lda, \
+        std::int64_t stride_a, std::int64_t batch_size) {                              \
+        return 0;                                                                      \
     }
 
 POTRF_GROUP_LAUNCHER_SCRATCH(float)
