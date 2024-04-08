@@ -147,7 +147,7 @@ if (NOT PORTBLAS_FOUND)
   FetchContent_Declare(
     portBLAS
     GIT_REPOSITORY https://github.com/codeplaysoftware/portBLAS
-    GIT_TAG        master
+    GIT_TAG        861b310df6833059dc7ca6eb6eb81d4741049085
   )
   FetchContent_MakeAvailable(portBLAS)
   message(STATUS "Looking for portBLAS - downloaded")
