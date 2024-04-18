@@ -95,13 +95,14 @@ bool check_equal_matrix<acc_type_t<int32_t>, vec_type_t<int32_t>>(acc_type_t<int
 
 namespace {
 
-template <typename Ta, typename Tb, typename Tc, typename Ts>
+template <typename Ta, typename Tb, typename Tc, typename Ts, typename Tr = Ts>
 int test(device *dev, oneapi::mkl::layout layout, int64_t batch_size) {
     // Prepare data.
     int64_t m, n, k;
     int64_t lda, ldb, ldc;
     oneapi::mkl::transpose transa, transb;
     Ts alpha, beta;
+    Tr alpha_ref, beta_ref;
     int64_t i, tmp;
 
     batch_size = 1 + std::rand() % 20;
@@ -113,6 +114,8 @@ int test(device *dev, oneapi::mkl::layout layout, int64_t batch_size) {
     ldc = std::max(m, n);
     alpha = rand_scalar<Ts>();
     beta = rand_scalar<Ts>();
+    alpha_ref = alpha;
+    beta_ref = beta;
 
     if ((std::is_same<Ts, std::complex<float>>::value) ||
         (std::is_same<Ts, std::complex<double>>::value)) {
@@ -152,7 +155,7 @@ int test(device *dev, oneapi::mkl::layout layout, int64_t batch_size) {
     vector<Ta, allocator_helper<Tb, 64>> B(stride_b * batch_size);
     vector<Tc, allocator_helper<Tc, 64>> C(stride_c * batch_size),
         C_cast_ref(stride_c * batch_size);
-    vector<Ts, allocator_helper<Ts, 64>> A_ref(stride_a * batch_size), B_ref(stride_b * batch_size),
+    vector<Tr, allocator_helper<Tr, 64>> A_ref(stride_a * batch_size), B_ref(stride_b * batch_size),
         C_ref(stride_c * batch_size);
 
     for (i = 0; i < batch_size; i++) {
@@ -172,7 +175,7 @@ int test(device *dev, oneapi::mkl::layout layout, int64_t batch_size) {
     }
 
     // Call reference GEMM_BATCH_STRIDE.
-    using fp_ref = typename ref_type_info<Ts>::type;
+    using fp_ref = typename ref_type_info<Tr>::type;
     int m_ref = (int)m;
     int n_ref = (int)n;
     int k_ref = (int)k;
@@ -184,10 +187,10 @@ int test(device *dev, oneapi::mkl::layout layout, int64_t batch_size) {
     for (i = 0; i < batch_size_ref; i++) {
         ::gemm(convert_to_cblas_layout(layout), convert_to_cblas_trans(transa),
                convert_to_cblas_trans(transb), (const int *)&m_ref, (const int *)&n_ref,
-               (const int *)&k_ref, (const fp_ref *)&alpha,
+               (const int *)&k_ref, (const fp_ref *)&alpha_ref,
                (const fp_ref *)(A_ref.data() + stride_a * i), (const int *)&lda_ref,
                (const fp_ref *)(B_ref.data() + stride_b * i), (const int *)&ldb_ref,
-               (const fp_ref *)&beta, (fp_ref *)(C_ref.data() + stride_c * i),
+               (const fp_ref *)&beta_ref, (fp_ref *)(C_ref.data() + stride_c * i),
                (const int *)&ldc_ref);
     }
 
@@ -292,7 +295,7 @@ TEST_P(GemmBatchStrideTests, RealHalfRealScalarPrecision) {
 }
 
 TEST_P(GemmBatchStrideTests, RealIntRealScalarPrecision) {
-    EXPECT_TRUEORSKIP((test<std::int8_t, std::int8_t, float, float>(std::get<0>(GetParam()),
+    EXPECT_TRUEORSKIP((test<std::int8_t, std::int8_t, float, float, double>(std::get<0>(GetParam()),
                                                                     std::get<1>(GetParam()), 5)));
 }
 

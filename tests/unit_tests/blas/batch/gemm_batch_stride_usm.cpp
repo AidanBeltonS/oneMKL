@@ -87,7 +87,7 @@ bool check_equal_matrix<vec_type_t<int32_t>, vec_type_t<int32_t>>(vec_type_t<int
 
 namespace {
 
-template <typename Ta, typename Tb, typename Tc, typename Ts>
+template <typename Ta, typename Tb, typename Tc, typename Ts, typename Tr = Ts>
 int test(device *dev, oneapi::mkl::layout layout, int64_t batch_size) {
     // Catch asynchronous exceptions.
     auto exception_handler = [](exception_list exceptions) {
@@ -113,6 +113,7 @@ int test(device *dev, oneapi::mkl::layout layout, int64_t batch_size) {
     int64_t lda, ldb, ldc;
     oneapi::mkl::transpose transa, transb;
     Ts alpha, beta;
+    Tr alpha_ref, beta_ref;
 
     int64_t i, tmp;
 
@@ -125,6 +126,8 @@ int test(device *dev, oneapi::mkl::layout layout, int64_t batch_size) {
     ldc = std::max(m, n);
     alpha = rand_scalar<Ts>();
     beta = rand_scalar<Ts>();
+    alpha_ref = alpha;
+    beta_ref = beta;
     if ((std::is_same<Ts, std::complex<float>>::value) ||
         (std::is_same<Ts, std::complex<double>>::value)) {
         tmp = std::rand() % 3;
@@ -162,11 +165,11 @@ int test(device *dev, oneapi::mkl::layout layout, int64_t batch_size) {
     auto ua = usm_allocator<Ta, usm::alloc::shared, 64>(cxt, *dev);
     auto ub = usm_allocator<Tb, usm::alloc::shared, 64>(cxt, *dev);
     auto uc = usm_allocator<Tc, usm::alloc::shared, 64>(cxt, *dev);
-    auto us = usm_allocator<Ts, usm::alloc::shared, 64>(cxt, *dev);
+    auto ur = usm_allocator<Tr, usm::alloc::shared, 64>(cxt, *dev);
     vector<Ta, decltype(ua)> A(ua);
     vector<Tb, decltype(ub)> B(ub);
     vector<Tc, decltype(uc)> C(uc), C_cast_ref(uc);
-    vector<Ts, decltype(us)> A_ref(us), B_ref(us), C_ref(us);
+    vector<Tr, decltype(ur)> A_ref(ur), B_ref(ur), C_ref(ur);
 
     A.resize(stride_a * batch_size);
     B.resize(stride_b * batch_size);
@@ -179,14 +182,12 @@ int test(device *dev, oneapi::mkl::layout layout, int64_t batch_size) {
     Ta **a_array = (Ta **)oneapi::mkl::malloc_shared(64, sizeof(Ta *) * batch_size, *dev, cxt);
     Tb **b_array = (Tb **)oneapi::mkl::malloc_shared(64, sizeof(Tb *) * batch_size, *dev, cxt);
     Tc **c_array = (Tc **)oneapi::mkl::malloc_shared(64, sizeof(Tc *) * batch_size, *dev, cxt);
-    Ts **c_ref_array = (Ts **)oneapi::mkl::malloc_shared(64, sizeof(Ts *) * batch_size, *dev, cxt);
 
-    if ((a_array == NULL) || (b_array == NULL) || (c_array == NULL) || (c_ref_array == NULL)) {
+    if ((a_array == NULL) || (b_array == NULL) || (c_array == NULL)) {
         std::cout << "Error cannot allocate arrays of pointers\n";
         oneapi::mkl::free_shared(a_array, cxt);
         oneapi::mkl::free_shared(b_array, cxt);
         oneapi::mkl::free_shared(c_array, cxt);
-        oneapi::mkl::free_shared(c_ref_array, cxt);
         return false;
     }
 
@@ -194,7 +195,6 @@ int test(device *dev, oneapi::mkl::layout layout, int64_t batch_size) {
         a_array[i] = &A[i * stride_a];
         b_array[i] = &B[i * stride_b];
         c_array[i] = &C[i * stride_c];
-        c_ref_array[i] = &C_ref[i * stride_c];
     }
 
     rand_matrix(A, oneapi::mkl::layout::col_major, oneapi::mkl::transpose::nontrans,
@@ -211,7 +211,7 @@ int test(device *dev, oneapi::mkl::layout layout, int64_t batch_size) {
                 stride_c * batch_size, 1, stride_c * batch_size, C_ref);
 
     // Call reference GEMM_BATCH_STRIDE.
-    using fp_ref = typename ref_type_info<Ts>::type;
+    using fp_ref = typename ref_type_info<Tr>::type;
     int m_ref = (int)m;
     int n_ref = (int)n;
     int k_ref = (int)k;
@@ -220,12 +220,12 @@ int test(device *dev, oneapi::mkl::layout layout, int64_t batch_size) {
     int ldc_ref = (int)ldc;
     int batch_size_ref = (int)batch_size;
     for (i = 0; i < batch_size_ref; i++) {
-        ::gemm(convert_to_cblas_layout(layout), convert_to_cblas_trans(transa),
+        ::gemm<Tr>(convert_to_cblas_layout(layout), convert_to_cblas_trans(transa),
                convert_to_cblas_trans(transb), (const int *)&m_ref, (const int *)&n_ref,
-               (const int *)&k_ref, (const fp_ref *)&alpha,
+               (const int *)&k_ref, (const fp_ref *)&alpha_ref,
                (const fp_ref *)(A_ref.data() + stride_a * i), (const int *)&lda_ref,
                (const fp_ref *)(B_ref.data() + stride_b * i), (const int *)&ldb_ref,
-               (const fp_ref *)&beta, (fp_ref *)(C_ref.data() + stride_c * i),
+               (const fp_ref *)&beta_ref, (fp_ref *)(C_ref.data() + stride_c * i),
                (const int *)&ldc_ref);
     }
 
@@ -276,7 +276,6 @@ int test(device *dev, oneapi::mkl::layout layout, int64_t batch_size) {
         oneapi::mkl::free_shared(a_array, cxt);
         oneapi::mkl::free_shared(b_array, cxt);
         oneapi::mkl::free_shared(c_array, cxt);
-        oneapi::mkl::free_shared(c_ref_array, cxt);
         return test_skipped;
     }
 
@@ -286,7 +285,7 @@ int test(device *dev, oneapi::mkl::layout layout, int64_t batch_size) {
     }
 
     // Compare the results of reference implementation and DPC++ implementation.
-    int tol_scalar = std::is_same_v<Ta, Ts> ? 10 : 60;
+    int tol_scalar = std::is_same_v<Ta, Tr> ? 10 : 60;
     if (main_queue.get_device().is_cpu())
         tol_scalar = 100;
 
@@ -300,7 +299,6 @@ int test(device *dev, oneapi::mkl::layout layout, int64_t batch_size) {
     oneapi::mkl::free_shared(a_array, cxt);
     oneapi::mkl::free_shared(b_array, cxt);
     oneapi::mkl::free_shared(c_array, cxt);
-    oneapi::mkl::free_shared(c_ref_array, cxt);
 
     return (int)good;
 }
@@ -319,7 +317,7 @@ TEST_P(GemmBatchStrideUsmTests, RealHalfRealScalarPrecision) {
 }
 
 TEST_P(GemmBatchStrideUsmTests, RealIntRealScalarPrecision) {
-    EXPECT_TRUEORSKIP((test<std::int8_t, std::int8_t, float, float>(std::get<0>(GetParam()),
+    EXPECT_TRUEORSKIP((test<std::int8_t, std::int8_t, float, float, double>(std::get<0>(GetParam()),
                                                                     std::get<1>(GetParam()), 5)));
 }
 
