@@ -24,6 +24,7 @@
 #include <cublas_v2.h>
 #include <cuda.h>
 #include <complex>
+
 #if __has_include(<sycl/sycl.hpp>)
 #include <sycl/sycl.hpp>
 #else
@@ -57,6 +58,18 @@ static inline void host_task_internal(H &cgh, sycl::queue queue, F f) {
     });
 }
 #else
+
+#ifdef SYCL_EXT_ACPP_ENQUEUE_CUSTOM_OPERATION
+#pragma message("Using AdaptiveCpp_enqueue_custom_operation")
+template <typename H, typename F>
+static inline void host_task_internal(H &cgh, sycl::queue queue, F f) {
+    cgh.AdaptiveCpp_enqueue_custom_operation([f, queue](sycl::interop_handle ih) {
+        auto sc = CublasScopedContextHandler(queue, ih);
+        f(sc);
+    });
+}
+#else
+#pragma message("Using default host_task")
 template <typename H, typename F>
 static inline void host_task_internal(H &cgh, sycl::queue queue, F f) {
     cgh.host_task([f, queue](sycl::interop_handle ih) {
@@ -64,6 +77,8 @@ static inline void host_task_internal(H &cgh, sycl::queue queue, F f) {
         f(sc);
     });
 }
+#endif //SYCL_EXT_ACPP_ENQUEUE_CUSTOM_OPERATION
+
 #endif
 template <typename H, typename F>
 static inline void onemkl_cublas_host_task(H &cgh, sycl::queue queue, F f) {

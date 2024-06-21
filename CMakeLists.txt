@@ -72,6 +72,14 @@ option(BUILD_EXAMPLES "" ON)
 ## Documentation
 option(BUILD_DOC "" OFF)
 
+if(NOT DEFINED USE_ADAPTIVE_HOST_TASK)
+	message(FATAL_ERROR "MUST set USE_ADAPTIVE_HOST_TASK to 0 or 1.")
+endif()
+
+
+
+
+
 ## Supported domains
 set(DOMAINS_LIST "")
 if(ENABLE_MKLCPU_BACKEND
@@ -292,6 +300,10 @@ else()
     find_package(Compiler REQUIRED)
   endif()
 endif()
+
+
+
+
 
 if(DEFINED REF_BLAS_ROOT)
   find_file(REF_BLAS_LIBNAME NAMES blas.dll libblas.so HINTS ${REF_BLAS_ROOT} PATH_SUFFIXES lib lib64)
